@@ -25,6 +25,7 @@ import android.view.MenuItem;
 import android.view.Surface;
 import android.view.View;
 import android.widget.Button;
+import android.widget.Toast;
 
 import java.io.File;
 import java.io.IOException;
@@ -36,23 +37,40 @@ import java.nio.FloatBuffer;
  * Record the camera (no audio) to a MP4 file in sdcard.
  * Basically, we can use MediaRecorder to this task.
  * This example is for editing of the video as MediaCodec is encoding the video.
- *
+ * <p/>
  * Required: Android 4.3 ( API 18 )
- *
+ * <p/>
  * Output: /sdcard/recordvideo.mp4
- *
  */
 public class MainActivity extends Activity {
 
     private static final String TAG = "MainActivity";
     private static final boolean DEBUG = true;
-
+    // Encoder Parameters
+    private static final String MIME_TYPE = "video/avc";    // H.264 Advanced Video Coding
+    private static final int FRAME_WIDTH = 640;             // 640px
+    private static final int FRAME_HEIGHT = 480;            // 480px
+    private static final int FRAME_RATE = 30;               // 30fps
+    private static final int IFRAME_INTERVAL = 5;           // 5 seconds between I-frames
+    private static final long DURATION_SEC = 8;             // 8 seconds of video
+    private static final int BITRATE = 6000000;            // 6000000 Mbps
+    /**
+     * Shader functions for frame editing
+     */
+    // Fragment shader that swaps color channels around.
+    private static final String SWAPPED_FRAGMENT_SHADER =
+            "#extension GL_OES_EGL_image_external : require\n" +
+                    "precision mediump float;\n" +
+                    "varying vec2 vTextureCoord;\n" +
+                    "uniform samplerExternalOES sTexture;\n" +
+                    "void main() {\n" +
+                    "  gl_FragColor = texture2D(sTexture, vTextureCoord).gbra;\n" +
+                    "}\n";
     /**
      * Get the sdcard path.
      * Permission: WRITE_EXTERNAL_STORAGE
      */
     private File OUTPUT_DIR = Environment.getExternalStorageDirectory();
-
     /**
      * Encoder & Muxer
      */
@@ -62,21 +80,10 @@ public class MainActivity extends Activity {
     private boolean mMuxerStarted;
     private CodecInputSurface mInputSurface;
     private MediaCodec.BufferInfo mBufferInfo;
-
-    // Encoder Parameters
-    private static final String MIME_TYPE = "video/avc";    // H.264 Advanced Video Coding
-    private static final int FRAME_WIDTH = 640;             // 640px
-    private static final int FRAME_HEIGHT = 480;            // 480px
-    private static final int FRAME_RATE = 30;               // 30fps
-    private static final int IFRAME_INTERVAL = 5;           // 5 seconds between I-frames
-    private static final long DURATION_SEC = 8;             // 8 seconds of video
-    private static final int BITRATE = 6000000;            // 6000000 Mbps
-
     /**
      * Camera Stuff
      */
     private Camera mCamera;
-
     private SurfaceTextureManager mStManager;
 
     @Override
@@ -92,12 +99,79 @@ public class MainActivity extends Activity {
                 if (DEBUG) {
                     Log.d(TAG, "Button recordVideoToMP4 onClick");
                 }
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        prepareCamera(FRAME_WIDTH, FRAME_HEIGHT);
+                        prepareEncoder(FRAME_WIDTH, FRAME_HEIGHT, BITRATE);
+                        mInputSurface.makeCurrent();
+                        prepareSurfaceTexture();
 
 
-                prepareCamera(FRAME_WIDTH, FRAME_HEIGHT);
-                prepareEncoder(FRAME_WIDTH, FRAME_HEIGHT, BITRATE);
-                mInputSurface.makeCurrent();
-                prepareSurfaceTexture();
+                        mCamera.startPreview();
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(getApplicationContext(), "Start recording", Toast.LENGTH_LONG).show();
+                            }
+                        });
+
+
+                        long startWhen = System.nanoTime();
+                        long desiredEnd = startWhen + DURATION_SEC * 1000000000L;
+                        SurfaceTexture st = mStManager.getSurfaceTexture();
+                        int frameCount = 0;
+
+                        while (System.nanoTime() < desiredEnd) {
+                            // Feed any pending encoder output into the muxer.
+                            drainEncoder(false);
+
+                            // Switch up the colors every 15 frames.  Besides demonstrating the use of
+                            // fragment shaders for video editing, this provides a visual indication of
+                            // the frame rate: if the camera is capturing at 15fps, the colors will change
+                            // once per second.
+                            if ((frameCount % 15) == 0) {
+                                Log.d(TAG, "((frameCount % 15) == 0): change color");
+
+                                String fragmentShader = null;
+                                if ((frameCount & 0x01) != 0) {
+                                    fragmentShader = SWAPPED_FRAGMENT_SHADER;
+                                }
+                                mStManager.changeFragmentShader(fragmentShader);
+                            }
+                            frameCount++;
+
+                            // Acquire a new frame of input, and render it to the Surface.  If we had a
+                            // GLSurfaceView we could switch EGL contexts and call drawImage() a second
+                            // time to render it on screen.  The texture can be shared between contexts by
+                            // passing the GLSurfaceView's EGLContext as eglCreateContext()'s share_context
+                            // argument.
+                            mStManager.awaitNewImage();
+                            mStManager.drawImage();
+
+                            // Set the presentation time stamp from the SurfaceTexture's time stamp.  This
+                            // will be used by MediaMuxer to set the PTS in the video.
+                            if (DEBUG) {
+                                Log.d(TAG, "present: " +
+                                        ((st.getTimestamp() - startWhen) / 1000000.0) + "ms");
+                            }
+                            mInputSurface.setPresentationTime(st.getTimestamp());
+
+                            // Submit it to the encoder.  The eglSwapBuffers call will block if the input
+                            // is full, which would be bad if it stayed full until we dequeued an output
+                            // buffer (which we can't do, since we're stuck here).  So long as we fully drain
+                            // the encoder before supplying additional input, the system guarantees that we
+                            // can supply another frame without blocking.
+                            if (DEBUG) Log.d(TAG, "sending frame to encoder");
+                            mInputSurface.swapBuffers();
+                        }
+
+                        // send end-of-stream to encoder, and drain remaining output
+                        drainEncoder(true);
+                    }
+                }).start();
+
+
             }
         });
     }
@@ -107,6 +181,7 @@ public class MainActivity extends Activity {
     protected void onStop() {
         releaseCamera();
         releaseEncoder();
+        releaseSurfaceTexture();
         super.onStop();
     }
 
@@ -114,28 +189,28 @@ public class MainActivity extends Activity {
     /**
      * Camera functions
      */
-    private void prepareCamera(int expectedWidth, int expectedHeight){
-        if (DEBUG){
+    private void prepareCamera(int expectedWidth, int expectedHeight) {
+        if (DEBUG) {
             Log.d(TAG, "prepareCamera");
         }
 
-        try{
+        try {
             // Open front camera
             Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
-            for(int i = 0 ; i < Camera.getNumberOfCameras() ; i ++){
+            for (int i = 0; i < Camera.getNumberOfCameras(); i++) {
                 Camera.getCameraInfo(i, cameraInfo);
-                if( cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT ){
+                if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
                     mCamera = Camera.open(i);
                 }
             }
 
             // Else open rear camera
-            if (mCamera == null){
+            if (mCamera == null) {
                 mCamera = Camera.open();
             }
 
             // Else throw an Error
-            if (mCamera == null){
+            if (mCamera == null) {
                 throw new RuntimeException("Can not open any camera");
             }
 
@@ -143,32 +218,35 @@ public class MainActivity extends Activity {
             Camera.Parameters params = mCamera.getParameters();
             choosePreviewSize(params, expectedWidth, expectedHeight);
 
-        }catch (Exception e){
+        } catch (Exception e) {
             e.printStackTrace();
         }
     }
-    private void choosePreviewSize(Camera.Parameters params , int width, int height){
+
+    private void choosePreviewSize(Camera.Parameters params, int width, int height) {
         Camera.Size ppsfv = params.getPreferredPreviewSizeForVideo();
 
-        if (DEBUG){
+        if (DEBUG) {
             Log.d(TAG, "choosePreviewSize: PreferredPreviewSize width = " + ppsfv.width + " height = " + ppsfv.height);
         }
 
         for (Camera.Size size : params.getSupportedPreviewSizes()) {
             if (size.width == width && size.height == height) {
-                if(DEBUG) Log.d(TAG, "choosePreviewSize: setPreviewSize to " + width + " " + height);
+                if (DEBUG)
+                    Log.d(TAG, "choosePreviewSize: setPreviewSize to " + width + " " + height);
                 params.setPreviewSize(width, height);
                 return;
             }
         }
 
         Log.d(TAG, "choosePreviewSize: Unable to set preview size to " + width + " " + height + " revert to " + ppsfv.width + " " + ppsfv.height);
-        if(ppsfv != null) {
+        if (ppsfv != null) {
             params.setPreviewSize(ppsfv.width, ppsfv.height);
         }
     }
-    private void releaseCamera(){
-        if (DEBUG){
+
+    private void releaseCamera() {
+        if (DEBUG) {
             Log.d(TAG, "releaseCamera");
         }
         if (mCamera != null) {
@@ -182,7 +260,11 @@ public class MainActivity extends Activity {
     /**
      * Encoder functions
      */
-    private void prepareEncoder(int width, int height, int bitRate){
+    private void prepareEncoder(int width, int height, int bitRate) {
+        if (DEBUG) {
+            Log.d(TAG, "prepareEncoder");
+        }
+
         mBufferInfo = new MediaCodec.BufferInfo();
         MediaFormat format = MediaFormat.createVideoFormat(MIME_TYPE, width, height);
 
@@ -204,12 +286,12 @@ public class MainActivity extends Activity {
         // you will likely want to defer instantiation of CodecInputSurface until after the
         // "display" EGL context is created, then modify the eglCreateContext call to
         // take eglGetCurrentContext() as the share_context argument.
-        try{
+        try {
             mEncoder = MediaCodec.createEncoderByType(MIME_TYPE);
             mEncoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
             mInputSurface = new CodecInputSurface(mEncoder.createInputSurface());
             mEncoder.start();
-        }catch (IOException ioe){
+        } catch (IOException ioe) {
             throw new RuntimeException("MediaCodec creation failed", ioe);
         }
 
@@ -251,11 +333,11 @@ public class MainActivity extends Activity {
             mInputSurface = null;
         }
         if (mMuxer != null) {
-            try{
+            try {
                 mMuxer.stop();
                 mMuxer.release();
                 mMuxer = null;
-            }catch (Exception e){
+            } catch (Exception e) {
                 Log.e(TAG, "You started a Muxer but haven't fed any data into it");
                 e.printStackTrace();
             }
@@ -263,12 +345,137 @@ public class MainActivity extends Activity {
     }
 
     /**
+     * Extracts all pending data from the encoder and forwards it to the muxer.
+     * <p/>
+     * If endOfStream is not set, this returns when there is no more data to drain.  If it
+     * is set, we send EOS to the encoder, and then iterate until we see EOS on the output.
+     * Calling this with endOfStream set should be done once, right before stopping the muxer.
+     * <p/>
+     * We're just using the muxer to get a .mp4 file (instead of a raw H.264 stream).  We're
+     * not recording audio.
+     */
+    private void drainEncoder(boolean endOfStream) {
+        final int TIMEOUT_USEC = 10000;
+        if (DEBUG) Log.d(TAG, "drainEncoder(" + endOfStream + ")");
+
+        if (endOfStream) {
+            if (DEBUG) Log.d(TAG, "sending EOS to encoder");
+            mEncoder.signalEndOfInputStream();
+        }
+
+        ByteBuffer[] encoderOutputBuffers = mEncoder.getOutputBuffers();
+        while (true) {
+            int encoderStatus = mEncoder.dequeueOutputBuffer(mBufferInfo, TIMEOUT_USEC);
+            if (encoderStatus == MediaCodec.INFO_TRY_AGAIN_LATER) {
+                // no output available yet
+                if (!endOfStream) {
+                    break;      // out of while
+                } else {
+                    if (DEBUG) Log.d(TAG, "no output available, spinning to await EOS");
+                }
+            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_BUFFERS_CHANGED) {
+                // not expected for an encoder
+                encoderOutputBuffers = mEncoder.getOutputBuffers();
+            } else if (encoderStatus == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
+                // should happen before receiving buffers, and should only happen once
+                if (mMuxerStarted) {
+                    throw new RuntimeException("format changed twice");
+                }
+                MediaFormat newFormat = mEncoder.getOutputFormat();
+                Log.d(TAG, "encoder output format changed: " + newFormat);
+
+                // now that we have the Magic Goodies, start the muxer
+                mTrackIndex = mMuxer.addTrack(newFormat);
+                mMuxer.start();
+                mMuxerStarted = true;
+            } else if (encoderStatus < 0) {
+                Log.w(TAG, "unexpected result from encoder.dequeueOutputBuffer: " +
+                        encoderStatus);
+                // let's ignore it
+            } else {
+                ByteBuffer encodedData = encoderOutputBuffers[encoderStatus];
+                if (encodedData == null) {
+                    throw new RuntimeException("encoderOutputBuffer " + encoderStatus +
+                            " was null");
+                }
+
+                if ((mBufferInfo.flags & MediaCodec.BUFFER_FLAG_CODEC_CONFIG) != 0) {
+                    // The codec config data was pulled out and fed to the muxer when we got
+                    // the INFO_OUTPUT_FORMAT_CHANGED status.  Ignore it.
+                    if (DEBUG) Log.d(TAG, "ignoring BUFFER_FLAG_CODEC_CONFIG");
+                    mBufferInfo.size = 0;
+                }
+
+                if (mBufferInfo.size != 0) {
+                    if (!mMuxerStarted) {
+                        throw new RuntimeException("muxer hasn't started");
+                    }
+
+                    // adjust the ByteBuffer values to match BufferInfo (not needed?)
+                    encodedData.position(mBufferInfo.offset);
+                    encodedData.limit(mBufferInfo.offset + mBufferInfo.size);
+
+                    mMuxer.writeSampleData(mTrackIndex, encodedData, mBufferInfo);
+                    if (DEBUG) Log.d(TAG, "sent " + mBufferInfo.size + " bytes to muxer");
+                }
+
+                mEncoder.releaseOutputBuffer(encoderStatus, false);
+
+                if ((mBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0) {
+                    if (!endOfStream) {
+                        Log.w(TAG, "reached end of stream unexpectedly");
+                    } else {
+                        if (DEBUG) Log.d(TAG, "end of stream reached");
+                        runOnUiThread(new Runnable() {
+                            @Override
+                            public void run() {
+                                Toast.makeText(getApplicationContext(), "End Of Stream Reached. Save the video to sdcard", Toast.LENGTH_LONG).show();
+                            }
+                        });
+                    }
+                    break;      // out of while
+                }
+            }
+        }
+    }
+
+    /**
+     * Configures SurfaceTexture for camera preview.  Initializes mStManager, and sets the
+     * associated SurfaceTexture as the Camera's "preview texture".
+     * <p/>
+     * Configure the EGL surface that will be used for output before calling here.
+     */
+    private void prepareSurfaceTexture() {
+        mStManager = new SurfaceTextureManager();
+        SurfaceTexture st = mStManager.getSurfaceTexture();
+        try {
+            mCamera.setPreviewTexture(st);
+        } catch (IOException ioe) {
+            throw new RuntimeException("setPreviewTexture failed", ioe);
+        }
+    }
+
+    /**
+     * SurfaceTexture functions
+     */
+
+    /**
+     * Releases the SurfaceTexture.
+     */
+    private void releaseSurfaceTexture() {
+        if (mStManager != null) {
+            mStManager.release();
+            mStManager = null;
+        }
+    }
+
+    /**
      * Holds state associated with a Surface used for MediaCodec encoder input.
-     * <p>
+     * <p/>
      * The constructor takes a Surface obtained from MediaCodec.createInputSurface(), and uses
      * that to create an EGL window surface. Calls to eglSwapBuffers() cause a frame of data to
      * be sent to the video encoder.
-     * <p>
+     * <p/>
      * This object owns the Surface -- releasing this will release the Surface too.
      */
     private static class CodecInputSurface {
@@ -361,6 +568,7 @@ public class MainActivity extends Activity {
 
             mSurface = null;
         }
+
         /**
          * Makes our EGL context and surface current.
          */
@@ -385,6 +593,7 @@ public class MainActivity extends Activity {
             EGLExt.eglPresentationTimeANDROID(mEGLDisplay, mEGLSurface, nsecs);
             checkEglError("eglPresentationTimeANDROID");
         }
+
         /**
          * Checks for EGL errors.  Throws an exception if one is found.
          */
@@ -397,38 +606,9 @@ public class MainActivity extends Activity {
     }
 
     /**
-     * SurfaceTexture functions
-     */
-
-    /**
-     * Configures SurfaceTexture for camera preview.  Initializes mStManager, and sets the
-     * associated SurfaceTexture as the Camera's "preview texture".
-     * <p>
-     * Configure the EGL surface that will be used for output before calling here.
-     */
-    private void prepareSurfaceTexture() {
-        mStManager = new SurfaceTextureManager();
-        SurfaceTexture st = mStManager.getSurfaceTexture();
-        try {
-            mCamera.setPreviewTexture(st);
-        } catch (IOException ioe) {
-            throw new RuntimeException("setPreviewTexture failed", ioe);
-        }
-    }
-
-    /**
-     * Releases the SurfaceTexture.
-     */
-    private void releaseSurfaceTexture() {
-        if (mStManager != null) {
-            mStManager.release();
-            mStManager = null;
-        }
-    }
-    /**
      * Manages a SurfaceTexture.  Creates SurfaceTexture and TextureRender objects, and provides
      * functions that wait for frames and render them to the current EGL surface.
-     * <p>
+     * <p/>
      * The SurfaceTexture can be passed to Camera.setPreviewTexture() to receive camera output.
      */
     private static class SurfaceTextureManager implements SurfaceTexture.OnFrameAvailableListener {
@@ -534,24 +714,15 @@ public class MainActivity extends Activity {
             }
         }
     }
+
     /**
      * Code for rendering a texture onto a surface using OpenGL ES 2.0.
      */
-    private static class STextureRender{
+    private static class STextureRender {
         private static final int FLOAT_SIZE_BYTES = 4;
         private static final int TRIANGLE_VERTICES_DATA_STRIDE_BYTES = 5 * FLOAT_SIZE_BYTES;
         private static final int TRIANGLE_VERTICES_DATA_POS_OFFSET = 0;
         private static final int TRIANGLE_VERTICES_DATA_UV_OFFSET = 3;
-        private final float[] mTriangleVerticesData = {
-                // X, Y, Z, U, Vo
-                -1.0f, -1.0f, 0, 0.f, 0.f,
-                1.0f, -1.0f, 0, 1.f, 0.f,
-                -1.0f,  1.0f, 0, 0.f, 1.f,
-                1.0f,  1.0f, 0, 1.f, 1.f,
-        };
-
-        private FloatBuffer mTriangleVertices;
-
         private static final String VERTEX_SHADER =
                 "uniform mat4 uMVPMatrix;\n" +
                         "uniform mat4 uSTMatrix;\n" +
@@ -562,7 +733,6 @@ public class MainActivity extends Activity {
                         "    gl_Position = uMVPMatrix * aPosition;\n" +
                         "    vTextureCoord = (uSTMatrix * aTextureCoord).xy;\n" +
                         "}\n";
-
         private static final String FRAGMENT_SHADER =
                 "#extension GL_OES_EGL_image_external : require\n" +
                         "precision mediump float;\n" +      // highp here doesn't seem to matter
@@ -571,7 +741,14 @@ public class MainActivity extends Activity {
                         "void main() {\n" +
                         "    gl_FragColor = texture2D(sTexture, vTextureCoord);\n" +
                         "}\n";
-
+        private final float[] mTriangleVerticesData = {
+                // X, Y, Z, U, Vo
+                -1.0f, -1.0f, 0, 0.f, 0.f,
+                1.0f, -1.0f, 0, 1.f, 0.f,
+                -1.0f, 1.0f, 0, 0.f, 1.f,
+                1.0f, 1.0f, 0, 1.f, 1.f,
+        };
+        private FloatBuffer mTriangleVertices;
         private float[] mMVPMatrix = new float[16];
         private float[] mSTMatrix = new float[16];
 
@@ -589,6 +766,12 @@ public class MainActivity extends Activity {
             mTriangleVertices.put(mTriangleVerticesData).position(0);
 
             Matrix.setIdentityM(mSTMatrix, 0);
+        }
+
+        public static void checkLocation(int location, String label) {
+            if (location < 0) {
+                throw new RuntimeException("Unable to locate '" + label + "' in program");
+            }
         }
 
         public int getTextureId() {
@@ -738,12 +921,6 @@ public class MainActivity extends Activity {
             while ((error = GLES20.glGetError()) != GLES20.GL_NO_ERROR) {
                 Log.e(TAG, op + ": glError " + error);
                 throw new RuntimeException(op + ": glError " + error);
-            }
-        }
-
-        public static void checkLocation(int location, String label) {
-            if (location < 0) {
-                throw new RuntimeException("Unable to locate '" + label + "' in program");
             }
         }
     }
