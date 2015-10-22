@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.res.Resources;
 import android.hardware.Camera;
 import android.media.MediaCodec;
+import android.media.MediaCodecInfo;
+import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.os.Environment;
 import android.support.v7.app.AppCompatActivity;
@@ -11,10 +13,12 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.Surface;
 import android.view.View;
 import android.widget.Button;
 
 import java.io.File;
+import java.io.IOException;
 
 /**
  * Record the camera (no audio) to a MP4 file in sdcard.
@@ -35,14 +39,16 @@ public class MainActivity extends Activity {
      * Get the sdcard path.
      * Permission: WRITE_EXTERNAL_STORAGE
      */
-    private File SDCARD_DIR = Environment.getExternalStorageDirectory();
+    private File OUTPUT_DIR = Environment.getExternalStorageDirectory();
 
     /**
      * Encoder & Muxer
      */
     private MediaCodec mEncoder;
     private MediaMuxer mMuxer;
-
+    private int mTrackIndex;
+    private boolean mMuxerStarted;
+    private CodecInputSurface mInputSurface;
     private MediaCodec.BufferInfo mBufferInfo;
 
     // Encoder Parameters
@@ -52,7 +58,7 @@ public class MainActivity extends Activity {
     private static final int FRAME_RATE = 30;               // 30fps
     private static final int IFRAME_INTERVAL = 5;           // 5 seconds between I-frames
     private static final long DURATION_SEC = 8;             // 8 seconds of video
-    private static final long BITRATE = 6000000;            // 6000000 Mbps
+    private static final int BITRATE = 6000000;            // 6000000 Mbps
 
     /**
      * Camera Stuff
@@ -75,6 +81,8 @@ public class MainActivity extends Activity {
 
 
                 prepareCamera(FRAME_WIDTH, FRAME_HEIGHT);
+                prepareEncoder(FRAME_WIDTH, FRAME_HEIGHT, BITRATE);
+
             }
         });
     }
@@ -83,7 +91,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onStop() {
         releaseCamera();
-
+        releaseEncoder();
         super.onStop();
     }
 
@@ -140,7 +148,7 @@ public class MainActivity extends Activity {
         }
 
         Log.d(TAG, "choosePreviewSize: Unable to set preview size to " + width + " " + height + " revert to " + ppsfv.width + " " + ppsfv.height);
-        if(ppsfv != null){
+        if(ppsfv != null) {
             params.setPreviewSize(ppsfv.width, ppsfv.height);
         }
     }
@@ -152,6 +160,107 @@ public class MainActivity extends Activity {
             mCamera.stopPreview();
             mCamera.release();
             mCamera = null;
+        }
+    }
+
+
+    /**
+     * Encoder functions
+     */
+    private void prepareEncoder(int width, int height, int bitRate){
+        mBufferInfo = new MediaCodec.BufferInfo();
+        MediaFormat format = MediaFormat.createVideoFormat(MIME_TYPE, width, height);
+
+        // Set some properties.  Failing to specify some of these can cause the MediaCodec
+        // configure() call to throw an unhelpful exception.
+        format.setInteger(MediaFormat.KEY_COLOR_FORMAT,
+                MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface);
+        format.setInteger(MediaFormat.KEY_BIT_RATE, bitRate);
+        format.setInteger(MediaFormat.KEY_FRAME_RATE, FRAME_RATE);
+        format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, IFRAME_INTERVAL);
+
+        if (DEBUG)
+            Log.d(TAG, "format: " + format);
+
+        // Create a MediaCodec encoder, and configure it with our format.  Get a Surface
+        // we can use for input and wrap it with a class that handles the EGL work.
+        //
+        // If you want to have two EGL contexts -- one for display, one for recording --
+        // you will likely want to defer instantiation of CodecInputSurface until after the
+        // "display" EGL context is created, then modify the eglCreateContext call to
+        // take eglGetCurrentContext() as the share_context argument.
+        try{
+            mEncoder = MediaCodec.createEncoderByType(MIME_TYPE);
+            mEncoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+            mInputSurface = new CodecInputSurface(mEncoder.createInputSurface());
+            mEncoder.start();
+        }catch (IOException ioe){
+            throw new RuntimeException("MediaCodec creation failed", ioe);
+        }
+
+        // Output filename.  Ideally this would use Context.getFilesDir() rather than a
+        // hard-coded output directory.
+        String outputPath = new File(OUTPUT_DIR,
+                "test." + width + "x" + height + ".mp4").toString();
+        Log.i(TAG, "Output file is " + outputPath);
+
+
+        // Create a MediaMuxer.  We can't add the video track and start() the muxer here,
+        // because our MediaFormat doesn't have the Magic Goodies.  These can only be
+        // obtained from the encoder after it has started processing data.
+        //
+        // We're not actually interested in multiplexing audio.  We just want to convert
+        // the raw H.264 elementary stream we get from MediaCodec into a .mp4 file.
+        try {
+            mMuxer = new MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+        } catch (IOException ioe) {
+            throw new RuntimeException("MediaMuxer creation failed", ioe);
+        }
+
+        mTrackIndex = -1;
+        mMuxerStarted = false;
+    }
+
+    /**
+     * Releases encoder resources.
+     */
+    private void releaseEncoder() {
+        if (DEBUG) Log.d(TAG, "releasing encoder objects");
+        if (mEncoder != null) {
+            mEncoder.stop();
+            mEncoder.release();
+            mEncoder = null;
+        }
+        if (mInputSurface != null) {
+            mInputSurface.release();
+            mInputSurface = null;
+        }
+        if (mMuxer != null) {
+            try{
+                mMuxer.stop();
+                mMuxer.release();
+                mMuxer = null;
+            }catch (Exception e){
+                Log.e(TAG, "You started a Muxer but haven't fed any data into it");
+                e.printStackTrace();
+            }
+        }
+    }
+
+    private static class CodecInputSurface {
+        /**
+         * Creates a CodecInputSurface from a Surface.
+         */
+        public CodecInputSurface(Surface surface) {
+
+        }
+
+        /**
+         * Discards all resources held by this class, notably the EGL context.  Also releases the
+         * Surface that was passed to our constructor.
+         */
+        public void release() {
+
         }
     }
 }
