@@ -1,1 +1,1 @@
-include ':recordvideotomp4'
+include ':recordvideotomp4', ':cloneaudiovideofromsource'
