@@ -48,7 +48,7 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
     /**
      * Camera Stuff
      */
-    private Camera mCamera;
+//    private Camera mCamera;
     private SurfaceTextureManager mStManager;
 
     @Override
@@ -100,7 +100,9 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
                         mCameraEncoder.mInputSurface.makeCurrent();
                         prepareSurfaceTexture();
 
-                        mCamera.startPreview();
+//                        mCamera.startPreview();
+                        mUVCCamera.startPreview();
+
                         runOnUiThread(new Runnable() {
                             @Override
                             public void run() {
@@ -191,33 +193,33 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
             Log.d(TAG, "prepareCamera");
         }
 
-        try {
-            // Open front camera
-            Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
-            for (int i = 0; i < Camera.getNumberOfCameras(); i++) {
-                Camera.getCameraInfo(i, cameraInfo);
-                if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
-                    mCamera = Camera.open(i);
-                }
-            }
-
-            // Else open rear camera
-            if (mCamera == null) {
-                mCamera = Camera.open();
-            }
-
-            // Else throw an Error
-            if (mCamera == null) {
-                throw new RuntimeException("Can not open any camera");
-            }
-
-            // Select a preview size that match the expectedWidth & expectedHeight
-            Camera.Parameters params = mCamera.getParameters();
-            choosePreviewSize(params, expectedWidth, expectedHeight);
-
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+//        try {
+//            // Open front camera
+//            Camera.CameraInfo cameraInfo = new Camera.CameraInfo();
+//            for (int i = 0; i < Camera.getNumberOfCameras(); i++) {
+//                Camera.getCameraInfo(i, cameraInfo);
+//                if (cameraInfo.facing == Camera.CameraInfo.CAMERA_FACING_FRONT) {
+//                    mCamera = Camera.open(i);
+//                }
+//            }
+//
+//            // Else open rear camera
+//            if (mCamera == null) {
+//                mCamera = Camera.open();
+//            }
+//
+//            // Else throw an Error
+//            if (mCamera == null) {
+//                throw new RuntimeException("Can not open any camera");
+//            }
+//
+//            // Select a preview size that match the expectedWidth & expectedHeight
+//            Camera.Parameters params = mCamera.getParameters();
+//            choosePreviewSize(params, expectedWidth, expectedHeight);
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
     }
 
     private void choosePreviewSize(Camera.Parameters params, int width, int height) {
@@ -246,11 +248,11 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
         if (DEBUG) {
             Log.d(TAG, "releaseCamera");
         }
-        if (mCamera != null) {
-            mCamera.stopPreview();
-            mCamera.release();
-            mCamera = null;
-        }
+//        if (mCamera != null) {
+//            mCamera.stopPreview();
+//            mCamera.release();
+//            mCamera = null;
+//        }
     }
 
 
@@ -265,9 +267,11 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
         mStManager = new SurfaceTextureManager();
         SurfaceTexture st = mStManager.getSurfaceTexture();
         try {
-            mCamera.setPreviewTexture(st);
-        } catch (IOException ioe) {
-            throw new RuntimeException("setPreviewTexture failed", ioe);
+//            mCamera.setPreviewTexture(st);
+            mUVCCamera.setPreviewTexture(st);
+//            mUVCCamera.setPreviewDisplay(mPreviewSurface);
+        } catch (Exception e) {
+            throw new RuntimeException("setPreviewTexture failed", e);
         }
     }
 
@@ -342,8 +346,8 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
                         }
                         if ((mUVCCamera != null) && (mPreviewSurface != null)) {
                             isActive = true;
-                            mUVCCamera.setPreviewDisplay(mPreviewSurface);
-                            mUVCCamera.startPreview();
+//                            mUVCCamera.setPreviewDisplay(mPreviewSurface);
+//                            mUVCCamera.startPreview();
                             isPreview = true;
                         }
                     }

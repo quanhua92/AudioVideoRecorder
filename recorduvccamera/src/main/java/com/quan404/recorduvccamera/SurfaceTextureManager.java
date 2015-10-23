@@ -112,6 +112,7 @@ public class SurfaceTextureManager implements SurfaceTexture.OnFrameAvailableLis
      * Draws the data from SurfaceTexture onto the current EGL surface.
      */
     public void drawImage() {
+        if (DEBUG) Log.d(TAG, "drawImage");
         mTextureRender.drawFrame(mSurfaceTexture);
     }
 
