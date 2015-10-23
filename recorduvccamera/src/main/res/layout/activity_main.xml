@@ -23,5 +23,9 @@
         android:scaleType="centerCrop"
         android:src="@android:drawable/ic_menu_camera" />
 
+    <SurfaceView
+        android:id="@+id/surfaceView"
+        android:layout_width="300dp"
+        android:layout_height="200dp" />
 
 </LinearLayout>

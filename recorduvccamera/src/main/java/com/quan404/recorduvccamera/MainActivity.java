@@ -1,6 +1,9 @@
 package com.quan404.recorduvccamera;
 
 import android.app.Activity;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Paint;
 import android.graphics.SurfaceTexture;
 import android.hardware.Camera;
 import android.hardware.usb.UsbDevice;
@@ -11,11 +14,14 @@ import android.view.SurfaceHolder;
 import android.view.SurfaceView;
 import android.view.View;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.Toast;
 import com.serenegiant.usb.CameraDialog;
+import com.serenegiant.usb.IFrameCallback;
 import com.serenegiant.usb.USBMonitor;
 import com.serenegiant.usb.UVCCamera;
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -51,10 +57,14 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
 //    private Camera mCamera;
     private SurfaceTextureManager mStManager;
 
+    private SurfaceView surfaceView;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
+        surfaceView = (SurfaceView) findViewById(R.id.surfaceView);
 
         /**
          * UVC Camera functions
@@ -124,15 +134,17 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
                             // fragment shaders for video editing, this provides a visual indication of
                             // the frame rate: if the camera is capturing at 15fps, the colors will change
                             // once per second.
-                            if ((frameCount % 15) == 0) {
-                                Log.d(TAG, "((frameCount % 15) == 0): change color");
 
-                                String fragmentShader = null;
-                                if ((frameCount & 0x01) != 0) {
-                                    fragmentShader = SWAPPED_FRAGMENT_SHADER;
-                                }
-                                mStManager.changeFragmentShader(fragmentShader);
-                            }
+//                            if ((frameCount % 15) == 0) {
+//                                Log.d(TAG, "((frameCount % 15) == 0): change color");
+//
+//                                String fragmentShader = null;
+//                                if ((frameCount & 0x01) != 0) {
+//                                    fragmentShader = SWAPPED_FRAGMENT_SHADER;
+//                                }
+//                                mStManager.changeFragmentShader(fragmentShader);
+//                            }
+
                             frameCount++;
 
                             // Acquire a new frame of input, and render it to the Surface.  If we had a
@@ -268,8 +280,10 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
         SurfaceTexture st = mStManager.getSurfaceTexture();
         try {
 //            mCamera.setPreviewTexture(st);
-            mUVCCamera.setPreviewTexture(st);
-//            mUVCCamera.setPreviewDisplay(mPreviewSurface);
+//            mUVCCamera.setPreviewTexture(st);
+            mUVCCamera.setPreviewDisplay(mPreviewSurface);
+            mIFrameCallbackLeft = new MyIFrameCallback(st);
+            mUVCCamera.setFrameCallback(mIFrameCallbackLeft, UVCCamera.PIXEL_FORMAT_RGBX);
         } catch (Exception e) {
             throw new RuntimeException("setPreviewTexture failed", e);
         }
@@ -423,4 +437,34 @@ public class MainActivity extends Activity implements CameraDialog.CameraDialogP
             mPreviewSurface = null;
         }
     };
+    private class MyIFrameCallback implements IFrameCallback{
+
+        private Surface surface;
+        private Bitmap bitmap = Bitmap.createBitmap(UVCCamera.DEFAULT_PREVIEW_WIDTH, UVCCamera.DEFAULT_PREVIEW_HEIGHT, Bitmap.Config.ARGB_8888);
+        public MyIFrameCallback(SurfaceTexture surfaceTexture){
+            surface = new Surface(surfaceTexture);
+        }
+        @Override
+        public void onFrame(ByteBuffer frame) {
+            frame.clear();
+
+            synchronized (bitmap) {
+                bitmap.copyPixelsFromBuffer(frame.asReadOnlyBuffer());
+
+                try{
+                    Canvas canvas = surface.lockCanvas(null);
+                    canvas.drawBitmap(bitmap, 0, 0, null);
+                    surface.unlockCanvasAndPost(canvas);
+
+
+                    Canvas canvasSurface = surfaceView.getHolder().lockCanvas(null);
+                    canvasSurface.drawBitmap(bitmap, 0, 0, null);
+                    surfaceView.getHolder().unlockCanvasAndPost(canvasSurface);
+                }catch (Exception e){
+                    e.printStackTrace();
+                }
+            }
+        }
+    }
+    private IFrameCallback mIFrameCallbackLeft;
 }
