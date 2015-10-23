@@ -1,1 +1,1 @@
-include ':recordvideotomp4', ':cloneaudiovideofromsource', ':recorduvccamera'
+include ':recordvideotomp4', ':cloneaudiovideofromsource', ':recorduvccamera', ':libuvccamera'

@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/AudioVideoRecorder.iml" filepath="$PROJECT_DIR$/AudioVideoRecorder.iml" />
       <module fileurl="file://$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" filepath="$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" />
+      <module fileurl="file://$PROJECT_DIR$/libuvccamera/libuvccamera.iml" filepath="$PROJECT_DIR$/libuvccamera/libuvccamera.iml" />
       <module fileurl="file://$PROJECT_DIR$/recorduvccamera/recorduvccamera.iml" filepath="$PROJECT_DIR$/recorduvccamera/recorduvccamera.iml" />
       <module fileurl="file://$PROJECT_DIR$/recordvideotomp4/recordvideotomp4.iml" filepath="$PROJECT_DIR$/recordvideotomp4/recordvideotomp4.iml" />
     </modules>
