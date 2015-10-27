@@ -9,6 +9,7 @@
         <option name="modules">
           <set>
             <option value="$PROJECT_DIR$" />
+            <option value="$PROJECT_DIR$/buffertobuffermediacodec" />
             <option value="$PROJECT_DIR$/cloneaudiovideofromsource" />
             <option value="$PROJECT_DIR$/generatevideoglcommands" />
             <option value="$PROJECT_DIR$/libuvccamera" />

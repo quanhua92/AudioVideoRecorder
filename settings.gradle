@@ -1,1 +1,1 @@
-include ':recordvideotomp4', ':cloneaudiovideofromsource', ':recorduvccamera', ':libuvccamera', ':generatevideoglcommands'
+include ':recordvideotomp4', ':cloneaudiovideofromsource', ':recorduvccamera', ':libuvccamera', ':generatevideoglcommands', ':buffertobuffermediacodec'

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- From: file:/home/robotbase/github/AudioVideoRecorder/libuvccamera/src/main/res/values-ja/strings.xml -->
-    <eat-comment/>
-    <string name="camera">カメラ</string>
-    <string name="no_device">USBカメラが見つかりません</string>
-    <string name="refresh">更新</string>
-    <string name="select">USB Webカメラを選択してください</string>
-</resources>

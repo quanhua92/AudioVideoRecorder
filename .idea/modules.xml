@@ -3,6 +3,7 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/AudioVideoRecorder.iml" filepath="$PROJECT_DIR$/AudioVideoRecorder.iml" />
+      <module fileurl="file://$PROJECT_DIR$/buffertobuffermediacodec/buffertobuffermediacodec.iml" filepath="$PROJECT_DIR$/buffertobuffermediacodec/buffertobuffermediacodec.iml" />
       <module fileurl="file://$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" filepath="$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" />
       <module fileurl="file://$PROJECT_DIR$/generatevideoglcommands/generatevideoglcommands.iml" filepath="$PROJECT_DIR$/generatevideoglcommands/generatevideoglcommands.iml" />
       <module fileurl="file://$PROJECT_DIR$/libuvccamera/libuvccamera.iml" filepath="$PROJECT_DIR$/libuvccamera/libuvccamera.iml" />
