@@ -6,11 +6,17 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
+import android.media.MediaMuxer;
 import android.os.Bundle;
+import android.os.Environment;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.Toast;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.ByteBuffer;
 
 /**
  * Buffer-to-buffer. Buffers are software-generated YUV frames in ByteBuffer objects,
@@ -24,6 +30,8 @@ public class MainActivity extends Activity {
      * UI Stuffs
      */
     private Button encodeBtn;
+
+    private static File OUTPUT_DIR = Environment.getExternalStorageDirectory();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,7 +62,7 @@ public class MainActivity extends Activity {
         /**
          * MediaCodec Stuffs
          */
-        private MediaCodec encoder = null;
+        private MediaCodec mEncoder = null;
 
         // parameters for the encoder
         private String MIME_TYPE = "video/avc";    // H.264 Advanced Video Coding
@@ -64,6 +72,11 @@ public class MainActivity extends Activity {
         private int mWidth;
         private int mHeight;
         private int mBitRate;
+
+        /**
+         * MediaMuxer
+         */
+        private MediaMuxer mMuxer;
 
         public EncodingThread(int width, int height, int bitrate){
             if (DEBUG) Log.d(TAG, "Constructor");
@@ -83,14 +96,25 @@ public class MainActivity extends Activity {
             prepareEncoder();
 
             /**
+             * Prepare MediaMuxer
+             */
+            prepareMuxer();
+
+            /**
              * Generate video and save to sdcard
              */
-
+            doGenerateSaveVideo();
 
             /**
              * Release Encoder
              */
             releaseEncoder();
+
+            /**
+             * Release Muxer
+             */
+            releaseMuxer();
+
             /**
              * Finish Thread
              */
@@ -104,12 +128,43 @@ public class MainActivity extends Activity {
             });
         }
 
+        private void prepareMuxer(){
+            String outputPath = new File(OUTPUT_DIR,
+                    "test.mp4").toString();
+            if(DEBUG) Log.i(TAG, "Output file is " + outputPath);
+
+            // Create a MediaMuxer. We can't add the video track and start() the muxer here,
+            // because our MediaFormat doesn't have the Magic Goodies.  These can only be
+            // obtained from the encoder after it has started processing data.
+            //
+            // We're not actually interested in multiplexing audio.  We just want to convert
+            // the raw H.264 elementary stream we get from MediaCodec into a .mp4 file.
+            try {
+                mMuxer = new MediaMuxer(outputPath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4);
+            } catch (IOException ioe) {
+                throw new RuntimeException("MediaMuxer creation failed", ioe);
+            }
+        }
+
+        private void releaseMuxer(){
+            if (mMuxer != null) {
+                try {
+                    mMuxer.stop();
+                    mMuxer.release();
+                    mMuxer = null;
+                } catch (Exception e) {
+                    Log.e(TAG, "You started a Muxer but haven't fed any data into it");
+                    e.printStackTrace();
+                }
+            }
+        }
+
         private void prepareEncoder(){
             try {
                 MediaCodecInfo codecInfo = selectCodec(MIME_TYPE);
                 if (codecInfo == null) {
                     // Don't fail CTS if they don't have an AVC codec (not here, anyway).
-                    Log.e(TAG, "Unable to find an appropriate codec for " + MIME_TYPE);
+                    if (DEBUG) Log.e(TAG, "Unable to find an appropriate codec for " + MIME_TYPE);
                     return;
                 }
                 if (DEBUG) Log.d(TAG, "found codec: " + codecInfo.getName());
@@ -127,9 +182,9 @@ public class MainActivity extends Activity {
                 if (DEBUG) Log.d(TAG, "format: " + format);
                 // Create a MediaCodec for the desired codec, then configure it as an encoder with
                 // our desired properties.
-                encoder = MediaCodec.createByCodecName(codecInfo.getName());
-                encoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
-                encoder.start();
+                mEncoder = MediaCodec.createByCodecName(codecInfo.getName());
+                mEncoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+                mEncoder.start();
             } catch (Exception e){
                 e.printStackTrace();
             }
@@ -137,10 +192,31 @@ public class MainActivity extends Activity {
 
         private void releaseEncoder(){
             if (DEBUG) Log.d(TAG, "releasing codec");
-            if (encoder != null) {
-                encoder.stop();
-                encoder.release();
+            if (mEncoder != null) {
+                mEncoder.stop();
+                mEncoder.release();
             }
+        }
+
+        private void doGenerateSaveVideo(){
+            if (DEBUG) Log.d(TAG, "---------- doGenerateSaveVideo ------------");
+            /**
+             * Init parameters
+             */
+            final int TIMEOUT_USEC = 10000;
+            ByteBuffer[] encoderInputBuffers = mEncoder.getInputBuffers();
+            ByteBuffer[] encoderOutputBuffers = mEncoder.getOutputBuffers();
+
+            MediaCodec.BufferInfo info = new MediaCodec.BufferInfo();
+            int generateIndex = 0;
+            int checkIndex = 0;
+
+            // The size of a frame of video data, in the formats we handle, is stride*sliceHeight
+            // for Y, and (stride/2)*(sliceHeight/2) for each of the Cb and Cr channels.  Application
+            // of algebra and assuming that stride==width and sliceHeight==height yields:
+            byte[] frameData = new byte[mWidth * mHeight * 3 / 2];
+
+            if (DEBUG) Log.d(TAG, "---------- end - doGenerateSaveVideo ------------");
         }
     }
 
