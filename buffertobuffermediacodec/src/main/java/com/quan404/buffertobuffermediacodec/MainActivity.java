@@ -2,11 +2,14 @@ package com.quan404.buffertobuffermediacodec;
 
 import android.app.Activity;
 import android.content.Context;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.opengl.GLES20;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -26,6 +29,15 @@ import java.util.Arrays;
  * Reference: http://bigflake.com/mediacodec/
  */
 public class MainActivity extends Activity {
+
+    /**
+     * GENERATE FRAME TYPE
+     */
+    public enum GENERATE_TYPE{
+        INPUT_BUFFER, // generate frame to a byte[]
+        INPUT_SURFACE // generate frame into a surface with OpenGL ES 2.0
+    }
+    public GENERATE_TYPE mGenerateType = GENERATE_TYPE.INPUT_SURFACE;
 
     /**
      * UI Stuffs
@@ -80,10 +92,12 @@ public class MainActivity extends Activity {
          */
         private MediaMuxer mMuxer;
 
+        private InputSurface inputSurface = null;
 
         /**
          * Test Data
          */
+        private byte[] imageData = null;
         private static final int TEST_Y = 120;                  // YUV values for colored rect
         private static final int TEST_U = 160;
         private static final int TEST_V = 200;
@@ -145,8 +159,10 @@ public class MainActivity extends Activity {
         }
 
         private void prepareMuxer(){
-            String outputPath = new File(OUTPUT_DIR,
-                    "test.mp4").toString();
+
+            String prefix = mGenerateType.name();
+
+            String outputPath = new File(OUTPUT_DIR, prefix + "_test.mp4").toString();
             if(DEBUG) Log.i(TAG, "Output file is " + outputPath);
 
             // Create a MediaMuxer. We can't add the video track and start() the muxer here,
@@ -184,7 +200,14 @@ public class MainActivity extends Activity {
                     return;
                 }
                 if (DEBUG) Log.d(TAG, "found codec: " + codecInfo.getName());
-                colorFormat = selectColorFormat(codecInfo, MIME_TYPE);
+
+
+                if(mGenerateType.equals(GENERATE_TYPE.INPUT_BUFFER)){
+                    colorFormat = selectColorFormat(codecInfo, MIME_TYPE);
+                }else{
+                    colorFormat = MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface;
+                }
+
                 if (DEBUG) Log.d(TAG, "found colorFormat: " + colorFormat);
                 // We avoid the device-specific limitations on width and height by using values that
                 // are multiples of 16, which all tested devices seem to be able to handle.
@@ -200,6 +223,11 @@ public class MainActivity extends Activity {
                 // our desired properties.
                 mEncoder = MediaCodec.createByCodecName(codecInfo.getName());
                 mEncoder.configure(format, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE);
+
+                if (mGenerateType.equals(GENERATE_TYPE.INPUT_SURFACE)){
+                    inputSurface = new InputSurface(mEncoder.createInputSurface());
+                }
+
                 mEncoder.start();
             } catch (Exception e){
                 e.printStackTrace();
@@ -208,6 +236,11 @@ public class MainActivity extends Activity {
 
         private void releaseEncoder(){
             if (DEBUG) Log.d(TAG, "releasing codec");
+
+            if (inputSurface != null) {
+                inputSurface.release();
+            }
+
             if (mEncoder != null) {
                 mEncoder.stop();
                 mEncoder.release();
@@ -234,6 +267,15 @@ public class MainActivity extends Activity {
 
 
             /**
+             * Populate imageData byte[] with an image
+             */
+            imageData = new byte[mWidth * mHeight * 3 / 2];
+            Bitmap bitmap = Bitmap.createScaledBitmap( BitmapFactory.decodeResource(getResources(),
+                                            R.raw.baby), mWidth, mHeight, false);
+
+            Log.e(TAG, "Quan: bitmapSize : " + bitmap.getHeight() +  " " + bitmap.getWidth());
+            imageData = getNV21(mWidth, mHeight, bitmap);
+            /**
              * Loop through 5 seconds and generate + save file
              */
 
@@ -245,32 +287,46 @@ public class MainActivity extends Activity {
                  * Generate
                  */
                 if(!inputDone){
-                    int inputBufIndex = mEncoder.dequeueInputBuffer(TIMEOUT_USEC);
-                    if (DEBUG) Log.d(TAG, "inputBufIndex=" + inputBufIndex);
+                    int inputBufIndex = 0;
+                    if(mGenerateType.equals(GENERATE_TYPE.INPUT_BUFFER)){
+                        inputBufIndex = mEncoder.dequeueInputBuffer(TIMEOUT_USEC);
+                        if (DEBUG) Log.d(TAG, "inputBufIndex=" + inputBufIndex);
+                    }
 
-                    if (inputBufIndex >= 0) {
+                    if ( inputBufIndex >= 0 ) {
                         long ptsUsec = computePresentationTime(generateIndex);
                         if ( generateIndex == NUM_FRAMES ) {
                             inputDone = true;
                             // Send an empty frame with the end-of-stream flag set.  If we set EOS
                             // on a frame with data, that frame data will be ignored, and the
                             // output will be short one frame.
-                            mEncoder.queueInputBuffer(inputBufIndex, 0, 0, ptsUsec,
+                            if(mGenerateType.equals(GENERATE_TYPE.INPUT_BUFFER)){
+                                mEncoder.queueInputBuffer(inputBufIndex, 0, 0, ptsUsec,
                                     MediaCodec.BUFFER_FLAG_END_OF_STREAM);
+                            }else{
+                                mEncoder.signalEndOfInputStream();
+                            }
+
                             if (DEBUG) Log.d(TAG, "sent input EOS (with zero-length frame)");
                         } else {
-                            generateFrame(generateIndex, colorFormat, frameData);
-                            ByteBuffer inputBuf = encoderInputBuffers[inputBufIndex];
-                            // the buffer should be sized to hold one full frame
-                            inputBuf.clear();
-                            inputBuf.put(frameData);
-                            mEncoder.queueInputBuffer(inputBufIndex, 0, frameData.length, ptsUsec, 0);
+                            if(mGenerateType.equals(GENERATE_TYPE.INPUT_BUFFER)){
+                                generateFrame(generateIndex, colorFormat, frameData);
+                                ByteBuffer inputBuf = encoderInputBuffers[inputBufIndex];
+                                // the buffer should be sized to hold one full frame
+                                inputBuf.clear();
+                                inputBuf.put(frameData);
+                                mEncoder.queueInputBuffer(inputBufIndex, 0, frameData.length, ptsUsec, 0);
+                            } else {
+                                inputSurface.makeCurrent();
+                                generateSurfaceFrame(generateIndex);
+                                inputSurface.setPresentationTime(computePresentationTime(generateIndex) * 1000);
+                                if (DEBUG) Log.d(TAG, "inputSurface swapBuffers");
+                                inputSurface.swapBuffers();
+                            }
+
                             if (DEBUG) Log.d(TAG, "submitted frame " + generateIndex + " to enc");
                         }
                         generateIndex++;
-                    } else {
-                        // either all in use, or we timed out during initial setup
-                        if (DEBUG) Log.d(TAG, "input buffer not available");
                     }
                 }
 
@@ -343,7 +399,6 @@ public class MainActivity extends Activity {
                 }
             }// end while
 
-
             if (DEBUG) Log.d(TAG, "---------- end - doGenerateSaveVideo ------------");
         }
 
@@ -352,6 +407,29 @@ public class MainActivity extends Activity {
          */
         private long computePresentationTime(int frameIndex) {
             return 132 + frameIndex * 1000000 / FRAME_RATE;
+        }
+
+        /**
+         * Generates a frame of data using GL commands.
+         */
+        private void generateSurfaceFrame(int frameIndex) {
+            frameIndex %= 8;
+            int startX, startY;
+            if (frameIndex < 4) {
+                // (0,0) is bottom-left in GL
+                startX = frameIndex * (mWidth / 4);
+                startY = mHeight / 2;
+            } else {
+                startX = (7 - frameIndex) * (mWidth / 4);
+                startY = 0;
+            }
+            GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+            GLES20.glClearColor(TEST_R0 / 255.0f, TEST_G0 / 255.0f, TEST_B0 / 255.0f, 1.0f);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+            GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
+            GLES20.glScissor(startX, startY, mWidth / 4, mHeight / 2);
+            GLES20.glClearColor(TEST_R1 / 255.0f, TEST_G1 / 255.0f, TEST_B1 / 255.0f, 1.0f);
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         }
 
         /**
@@ -368,6 +446,13 @@ public class MainActivity extends Activity {
             boolean semiPlanar = isSemiPlanarYUV(colorFormat);
             // Set to zero.  In YUV this is a dull green.
             Arrays.fill(frameData, (byte) 0);
+            /**
+             * Use a image instead of dull green
+             */
+            if (imageData != null){
+//                frameData = imageData.clone();
+            }
+
             int startX, startY, countX, countY;
             frameIndex %= 8;
             //frameIndex = (frameIndex / 8) % 8;    // use this instead for debug -- easier to see
@@ -478,6 +563,59 @@ public class MainActivity extends Activity {
                 return true;
             default:
                 throw new RuntimeException("unknown format " + colorFormat);
+        }
+    }
+
+    /**
+     * Conversion tool
+     */
+    // untested function
+    byte [] getNV21(int inputWidth, int inputHeight, Bitmap scaled) {
+
+        int [] argb = new int[inputWidth * inputHeight];
+
+        scaled.getPixels(argb, 0, inputWidth, 0, 0, inputWidth, inputHeight);
+
+        byte [] yuv = new byte[inputWidth*inputHeight*3/2];
+        encodeYUV420SP(yuv, argb, inputWidth, inputHeight);
+
+        scaled.recycle();
+
+        return yuv;
+    }
+
+    void encodeYUV420SP(byte[] yuv420sp, int[] argb, int width, int height) {
+        final int frameSize = width * height;
+
+        int yIndex = 0;
+        int uvIndex = frameSize;
+
+        int a, R, G, B, Y, U, V;
+        int index = 0;
+        for (int j = 0; j < height; j++) {
+            for (int i = 0; i < width; i++) {
+
+                a = (argb[index] & 0xff000000) >> 24; // a is not used obviously
+                R = (argb[index] & 0xff0000) >> 16;
+                G = (argb[index] & 0xff00) >> 8;
+                B = (argb[index] & 0xff) >> 0;
+
+                // well known RGB to YUV algorithm
+                Y = ( (  66 * R + 129 * G +  25 * B + 128) >> 8) +  16;
+                U = ( ( -38 * R -  74 * G + 112 * B + 128) >> 8) + 128;
+                V = ( ( 112 * R -  94 * G -  18 * B + 128) >> 8) + 128;
+
+                // NV21 has a plane of Y and interleaved planes of VU each sampled by a factor of 2
+                //    meaning for every 4 Y pixels there are 1 V and 1 U.  Note the sampling is every other
+                //    pixel AND every other scanline.
+                yuv420sp[yIndex++] = (byte) ((Y < 0) ? 0 : ((Y > 255) ? 255 : Y));
+                if (j % 2 == 0 && index % 2 == 0) {
+                    yuv420sp[uvIndex++] = (byte)((V<0) ? 0 : ((V > 255) ? 255 : V));
+                    yuv420sp[uvIndex++] = (byte)((U<0) ? 0 : ((U > 255) ? 255 : U));
+                }
+
+                index ++;
+            }
         }
     }
 }
