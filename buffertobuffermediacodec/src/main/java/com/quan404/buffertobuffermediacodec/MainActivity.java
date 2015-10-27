@@ -10,6 +10,7 @@ import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
 import android.opengl.GLES20;
+import android.opengl.GLUtils;
 import android.os.Bundle;
 import android.os.Environment;
 import android.util.Log;
@@ -20,6 +21,8 @@ import android.widget.Toast;
 import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.IntBuffer;
 import java.util.Arrays;
 
 /**
@@ -37,8 +40,8 @@ public class MainActivity extends Activity {
         INPUT_BUFFER, // generate frame to a byte[]
         INPUT_SURFACE // generate frame into a surface with OpenGL ES 2.0
     }
-    public GENERATE_TYPE mGenerateType = GENERATE_TYPE.INPUT_SURFACE;
-
+    public GENERATE_TYPE mGenerateType = GENERATE_TYPE.INPUT_BUFFER;
+    public boolean bufferWithBitmap = true; // use a bitmap instead of generated data
     /**
      * UI Stuffs
      */
@@ -191,8 +194,11 @@ public class MainActivity extends Activity {
             }
         }
 
+        private NV21Convertor convertor;
+
         private void prepareEncoder(){
             try {
+
                 MediaCodecInfo codecInfo = selectCodec(MIME_TYPE);
                 if (codecInfo == null) {
                     // Don't fail CTS if they don't have an AVC codec (not here, anyway).
@@ -227,6 +233,13 @@ public class MainActivity extends Activity {
                 if (mGenerateType.equals(GENERATE_TYPE.INPUT_SURFACE)){
                     inputSurface = new InputSurface(mEncoder.createInputSurface());
                 }
+
+                convertor = new NV21Convertor();
+                convertor.setSize(mWidth, mHeight);
+                convertor.setSliceHeigth(mHeight);
+                convertor.setStride(mWidth);
+                convertor.setYPadding(0);
+                convertor.setEncoderColorFormat(colorFormat);
 
                 mEncoder.start();
             } catch (Exception e){
@@ -265,16 +278,10 @@ public class MainActivity extends Activity {
             // of algebra and assuming that stride==width and sliceHeight==height yields:
             byte[] frameData = new byte[mWidth * mHeight * 3 / 2];
 
-
             /**
              * Populate imageData byte[] with an image
              */
-            imageData = new byte[mWidth * mHeight * 3 / 2];
-            Bitmap bitmap = Bitmap.createScaledBitmap( BitmapFactory.decodeResource(getResources(),
-                                            R.raw.baby), mWidth, mHeight, false);
 
-            Log.e(TAG, "Quan: bitmapSize : " + bitmap.getHeight() +  " " + bitmap.getWidth());
-            imageData = getNV21(mWidth, mHeight, bitmap);
             /**
              * Loop through 5 seconds and generate + save file
              */
@@ -310,11 +317,28 @@ public class MainActivity extends Activity {
                             if (DEBUG) Log.d(TAG, "sent input EOS (with zero-length frame)");
                         } else {
                             if(mGenerateType.equals(GENERATE_TYPE.INPUT_BUFFER)){
-                                generateFrame(generateIndex, colorFormat, frameData);
                                 ByteBuffer inputBuf = encoderInputBuffers[inputBufIndex];
+
                                 // the buffer should be sized to hold one full frame
                                 inputBuf.clear();
-                                inputBuf.put(frameData);
+
+                                if(!bufferWithBitmap){
+                                    /**
+                                     * use auto generated frame
+                                     */
+                                    generateFrame(generateIndex, colorFormat, frameData);
+                                    inputBuf.put(frameData);
+                                } else {
+                                    /**
+                                     * use a bitmap in resource
+                                     * */
+                                    final BitmapFactory.Options options = new BitmapFactory.Options();
+                                    options.inScaled = false;   // No pre-scaling
+                                    // Read in the resource
+                                    final Bitmap bitmap = BitmapFactory.decodeResource(getResources(), R.raw.baby, options);
+                                    convertor.convert(getNV21(mWidth, mHeight, bitmap), inputBuf);
+                                }
+
                                 mEncoder.queueInputBuffer(inputBufIndex, 0, frameData.length, ptsUsec, 0);
                             } else {
                                 inputSurface.makeCurrent();
@@ -423,6 +447,7 @@ public class MainActivity extends Activity {
                 startX = (7 - frameIndex) * (mWidth / 4);
                 startY = 0;
             }
+
             GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
             GLES20.glClearColor(TEST_R0 / 255.0f, TEST_G0 / 255.0f, TEST_B0 / 255.0f, 1.0f);
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
@@ -431,6 +456,7 @@ public class MainActivity extends Activity {
             GLES20.glClearColor(TEST_R1 / 255.0f, TEST_G1 / 255.0f, TEST_B1 / 255.0f, 1.0f);
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         }
+
 
         /**
          * Generates data for frame N into the supplied buffer.  We have an 8-frame animation
@@ -488,7 +514,7 @@ public class MainActivity extends Activity {
                     }
                 }
             }
-        }
+        }//end generateFrame
     }
 
     /**
