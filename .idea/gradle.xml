@@ -13,6 +13,8 @@
             <option value="$PROJECT_DIR$/cloneaudiovideofromsource" />
             <option value="$PROJECT_DIR$/generatevideoglcommands" />
             <option value="$PROJECT_DIR$/libuvccamera" />
+            <option value="$PROJECT_DIR$/record_audio_to_aac" />
+            <option value="$PROJECT_DIR$/recorddualuvccamera" />
             <option value="$PROJECT_DIR$/recorduvccamera" />
             <option value="$PROJECT_DIR$/recordvideotomp4" />
           </set>

@@ -7,6 +7,8 @@
       <module fileurl="file://$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" filepath="$PROJECT_DIR$/cloneaudiovideofromsource/cloneaudiovideofromsource.iml" />
       <module fileurl="file://$PROJECT_DIR$/generatevideoglcommands/generatevideoglcommands.iml" filepath="$PROJECT_DIR$/generatevideoglcommands/generatevideoglcommands.iml" />
       <module fileurl="file://$PROJECT_DIR$/libuvccamera/libuvccamera.iml" filepath="$PROJECT_DIR$/libuvccamera/libuvccamera.iml" />
+      <module fileurl="file://$PROJECT_DIR$/record_audio_to_aac/record_audio_to_aac.iml" filepath="$PROJECT_DIR$/record_audio_to_aac/record_audio_to_aac.iml" />
+      <module fileurl="file://$PROJECT_DIR$/recorddualuvccamera/recorddualuvccamera.iml" filepath="$PROJECT_DIR$/recorddualuvccamera/recorddualuvccamera.iml" />
       <module fileurl="file://$PROJECT_DIR$/recorduvccamera/recorduvccamera.iml" filepath="$PROJECT_DIR$/recorduvccamera/recorduvccamera.iml" />
       <module fileurl="file://$PROJECT_DIR$/recordvideotomp4/recordvideotomp4.iml" filepath="$PROJECT_DIR$/recordvideotomp4/recordvideotomp4.iml" />
     </modules>
